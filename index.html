@@ -355,16 +355,30 @@ function fmtDate(dateStr) {
 // ---- Parse Letterboxd RSS ----
 async function fetchLetterboxd() {
   const rssUrl = `https://letterboxd.com/${CONFIG.letterboxdUser}/rss/`;
-  // Try fast proxy first, fall back to allorigins
-  let xmlText;
-  try {
-    const r1 = await fetch(`https://corsproxy.io/?${encodeURIComponent(rssUrl)}`);
-    xmlText = await r1.text();
-  } catch(e) {
-    const r2 = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`);
-    const j = await r2.json();
-    xmlText = j.contents;
+
+  const proxies = [
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  ];
+
+  let xmlText = null;
+  for (const makeUrl of proxies) {
+    try {
+      const res = await fetch(makeUrl(rssUrl));
+      const text = await res.text();
+      // allorigins wraps in JSON
+      if (text.trim().startsWith('{')) {
+        const j = JSON.parse(text);
+        xmlText = j.contents || text;
+      } else {
+        xmlText = text;
+      }
+      if (xmlText && xmlText.includes('<item>')) break;
+    } catch(e) { continue; }
   }
+
+  if (!xmlText) throw new Error('All proxies failed');
   const parser = new DOMParser();
   const xml = parser.parseFromString(xmlText, 'text/xml');
   const items = [...xml.querySelectorAll('item')].slice(0, 5);

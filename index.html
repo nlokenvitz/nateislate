@@ -397,8 +397,8 @@ const CONFIG = {
 
   // Spotify: set to true and fill in your worker URL after deploy
   // See README section below for setup instructions
-  spotifyEnabled: true,
-  spotifyWorkerUrl: "https://spotify.lokenvitznathan.workers.dev",
+  spotifyEnabled: false,
+  spotifyWorkerUrl: "https://your-worker.yourname.workers.dev",
 };
 // =============================================
 
@@ -446,87 +446,11 @@ function fmtDate(dateStr) {
   return `${day} ${mon} ${yr}, ${hh}:${mm}`;
 }
 
-// ---- Parse Letterboxd RSS ----
-const LB_CACHE_KEY = 'lb_cache_v1';
-const LB_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-
-function parseLBXml(xmlText) {
-  const parser = new DOMParser();
-  const xml = parser.parseFromString(xmlText, 'text/xml');
-  const items = [...xml.querySelectorAll('item')].slice(0, 5);
-  return items.map(item => {
-    const title = item.querySelector('title')?.textContent || '';
-    const nsTitle = item.getElementsByTagName('letterboxd:filmTitle')[0]?.textContent;
-    const nsYear  = item.getElementsByTagName('letterboxd:filmYear')[0]?.textContent;
-    const nsRating = item.getElementsByTagName('letterboxd:memberRating')[0]?.textContent;
-
-    let filmTitle = nsTitle || '', year = nsYear || '';
-    if (!filmTitle) {
-      const m = title.match(/^(.+),\s*(\d{4})/);
-      if (m) { filmTitle = m[1].trim(); year = m[2]; }
-      else filmTitle = title;
-    }
-
-    let rating = '';
-    if (nsRating) {
-      const n = parseFloat(nsRating);
-      if (!isNaN(n)) rating = n.toFixed(1) + '/5';
-    }
-
-    let review = '';
-    const desc = item.querySelector('description')?.textContent || '';
-    if (desc) {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = desc;
-      const text = tmp.textContent.trim();
-      if (text && text.length > 10) {
-        review = text.length > 140 ? text.slice(0, 137) + '...' : text;
-      }
-    }
-
-    return { title: filmTitle, year, rating, review };
-  });
-}
-
+// ---- Fetch Letterboxd from our own worker (fast, cached server-side) ----
 async function fetchLetterboxd() {
-  // Show cached data immediately if fresh enough
-  try {
-    const cached = localStorage.getItem(LB_CACHE_KEY);
-    if (cached) {
-      const { data, ts } = JSON.parse(cached);
-      if (Date.now() - ts < LB_CACHE_TTL) return data;
-    }
-  } catch(e) {}
-
-  const rssUrl = `https://letterboxd.com/${CONFIG.letterboxdUser}/rss/`;
-
-  const proxies = [
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  ];
-
-  let xmlText = null;
-  for (const makeUrl of proxies) {
-    try {
-      const res = await fetch(makeUrl(rssUrl));
-      const text = await res.text();
-      // allorigins wraps in JSON
-      if (text.trim().startsWith('{')) {
-        const j = JSON.parse(text);
-        xmlText = j.contents || text;
-      } else {
-        xmlText = text;
-      }
-      if (xmlText && xmlText.includes('<item>')) break;
-    } catch(e) { continue; }
-  }
-
-  if (!xmlText) throw new Error('All proxies failed');
-  const data = parseLBXml(xmlText);
-  // Cache it
-  try { localStorage.setItem(LB_CACHE_KEY, JSON.stringify({ data, ts: Date.now() })); } catch(e) {}
-  return data;
+  const res = await fetch(CONFIG.spotifyWorkerUrl + '/letterboxd');
+  const json = await res.json();
+  return json.films || [];
 }
 
 // ---- Fetch Spotify via your Cloudflare Worker ----
